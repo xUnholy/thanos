@@ -19,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/weaveworks/common/user"
 
+	"github.com/thanos-io/thanos/pkg/api"
 	"github.com/thanos-io/thanos/pkg/component"
 	"github.com/thanos-io/thanos/pkg/extflag"
 	"github.com/thanos-io/thanos/pkg/extkingpin"
@@ -42,7 +43,8 @@ func registerQueryFrontend(app *extkingpin.App) {
 	cmd := app.Command(comp.String(), "query frontend")
 	cfg := &queryFrontendConfig{
 		Config: queryfrontend.Config{
-			CortexFrontendConfig: &cortexfrontend.Config{},
+			// Max body size is 10 MiB.
+			CortexFrontendConfig: &cortexfrontend.Config{MaxBodySize: 10 * 1024 * 1024},
 			QueryRangeConfig: queryfrontend.QueryRangeConfig{
 				Limits:             &cortexvalidation.Limits{},
 				ResultsCacheConfig: &queryrange.ResultsCacheConfig{},
@@ -57,6 +59,9 @@ func registerQueryFrontend(app *extkingpin.App) {
 	cfg.http.registerFlag(cmd)
 
 	// Query range tripperware flags.
+	cmd.Flag("query-range.align-range-with-step", "Mutate incoming queries to align their start and end with their step for better cache-ability. Note: Grafana dashboards do that by default.").
+		Default("true").BoolVar(&cfg.QueryRangeConfig.AlignRangeWithStep)
+
 	cmd.Flag("query-range.split-interval", "Split query range requests by an interval and execute in parallel, it should be greater than 0 when query-range.response-cache-config is configured.").
 		Default("24h").DurationVar(&cfg.QueryRangeConfig.SplitQueriesByInterval)
 
@@ -195,6 +200,7 @@ func runQueryFrontend(
 		instr := func(f http.HandlerFunc) http.HandlerFunc {
 			hf := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				name := "query-frontend"
+				api.SetCORS(w)
 				ins.NewHandler(
 					name,
 					logMiddleware.HTTPMiddleware(
